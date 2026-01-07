@@ -9,7 +9,6 @@ st.set_page_config(page_title="AI 存股戰情室", layout="wide", page_icon="�
 
 # 設定圖表風格
 plt.style.use('seaborn-v0_8')
-# 嘗試設定中文字型 (雲端環境若無中文字型可能會顯示方框，此為通用設定)
 plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'SimHei', 'Arial', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False
 
@@ -23,9 +22,11 @@ def get_stock_data(sid):
         stock = yf.Ticker(sid)
         hist = stock.history(period="1d")
         if hist.empty: return None
-        price = hist['Close'].iloc[-1]
         
-        # 股利計算 (抓取過去配息平均)
+        # 強制轉為純浮點數，避開 TypeError
+        price = float(hist['Close'].iloc[-1])
+        
+        # 股利計算
         div = stock.dividends.resample('YE').sum()
         if len(div) >= 5:
             avg_div = div.iloc[-6:-1].mean()
@@ -34,7 +35,7 @@ def get_stock_data(sid):
         else:
             avg_div = 0
             
-        return {"price": price, "avg_div": avg_div, "stock": stock}
+        return {"price": price, "avg_div": float(avg_div), "stock": stock}
     except:
         return None
 
@@ -179,26 +180,39 @@ with tab5:
     st.header("🌡️ 台股大盤溫度計")
     if st.button("測量現在溫度"):
         with st.spinner("測量中..."):
-            data = yf.download("^TWII", period="5y")['Close']
-            ma200 = data.rolling(200).mean()
-            bias = ((data - ma200)/ma200)*100
-            curr_bias = bias.iloc[-1]
-            
-            col1, col2 = st.columns(2)
-            with col1: st.metric("目前大盤指數", f"{int(data.iloc[-1]):,}")
-            with col2: st.metric("乖離率 (Bias)", f"{curr_bias:.2f}%")
-            
-            if curr_bias > 15: st.warning("🔴 過熱 (Overheated) - 建議分批慢買")
-            elif curr_bias < 0: st.success("🟢 便宜 (Oversold) - 黃金買點")
-            else: st.info("🟡 合理 (Fair) - 定期定額")
-            
-            fig, ax = plt.subplots(figsize=(10, 4))
-            ax.plot(bias.index, bias, color='gray', label='Bias')
-            ax.fill_between(bias.index, bias, 15, where=(bias>15), color='red', alpha=0.5)
-            ax.fill_between(bias.index, bias, 0, where=(bias<0), color='green', alpha=0.5)
-            ax.axhline(0, color='black', linestyle='--')
-            ax.set_title("Market Bias History")
-            st.pyplot(fig)
+            try:
+                # 這裡可能會有 MultiIndex 問題，強制選擇 'Close' 並 squeeze
+                data = yf.download("^TWII", period="5y")
+                if isinstance(data.columns, pd.MultiIndex):
+                    data = data['Close']
+                else:
+                    data = data['Close']
+                
+                ma200 = data.rolling(200).mean()
+                bias = ((data - ma200)/ma200)*100
+                
+                # --- 關鍵修正：強制轉為 float ---
+                current_index = float(data.iloc[-1])
+                curr_bias = float(bias.iloc[-1])
+                # ------------------------------
+                
+                col1, col2 = st.columns(2)
+                with col1: st.metric("目前大盤指數", f"{int(current_index):,}")
+                with col2: st.metric("乖離率 (Bias)", f"{curr_bias:.2f}%")
+                
+                if curr_bias > 15: st.warning("🔴 過熱 (Overheated) - 建議分批慢買")
+                elif curr_bias < 0: st.success("🟢 便宜 (Oversold) - 黃金買點")
+                else: st.info("🟡 合理 (Fair) - 定期定額")
+                
+                fig, ax = plt.subplots(figsize=(10, 4))
+                ax.plot(bias.index, bias, color='gray', label='Bias')
+                ax.fill_between(bias.index, bias, 15, where=(bias>15), color='red', alpha=0.5)
+                ax.fill_between(bias.index, bias, 0, where=(bias<0), color='green', alpha=0.5)
+                ax.axhline(0, color='black', linestyle='--')
+                ax.set_title("Market Bias History")
+                st.pyplot(fig)
+            except Exception as e:
+                st.error(f"讀取失敗，可能是資料源暫時連線錯誤: {e}")
 
 # ==========================================
 # Tab 6: 智能進場策略 (雙軌制 - 升級版)
@@ -219,18 +233,21 @@ with tab6:
                 hist = stock.history(period="1y")
                 
                 if hist.empty:
-                    st.error("無法取得資料")
+                    st.error("無法取得資料，請確認代號正確。")
                 else:
-                    current_price = hist['Close'].iloc[-1]
-                    ma200 = hist['Close'].rolling(200).mean().iloc[-1]
-                    # 若上市不滿200天改用60MA
-                    if pd.isna(ma200):
-                        ma200 = hist['Close'].rolling(60).mean().iloc[-1]
+                    # --- 關鍵修正：強制轉為 float ---
+                    current_price = float(hist['Close'].iloc[-1])
+                    ma200_raw = hist['Close'].rolling(200).mean().iloc[-1]
+                    
+                    if pd.isna(ma200_raw):
+                        ma200 = float(hist['Close'].rolling(60).mean().iloc[-1])
                         ma_name = "60MA"
                     else:
+                        ma200 = float(ma200_raw)
                         ma_name = "200MA"
                     
                     bias = ((current_price - ma200) / ma200) * 100
+                    # ------------------------------
                     
                     # 邏輯：依乖離率決定保留現金比例
                     if bias > 15:
@@ -288,4 +305,4 @@ with tab6:
                         st.table(pd.DataFrame(sig_data))
                         
         except Exception as e:
-            st.error(f"錯誤：{e}")
+            st.error(f"發生錯誤：{e}")
