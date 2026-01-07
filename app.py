@@ -173,70 +173,79 @@ with tab4:
         ax.pie(sizes, labels=labels, autopct='%1.1f%%', colors=['#ff9999','#66b3ff'], startangle=90)
         st.pyplot(fig)
 # ==========================================
-# Tab 5: 溫度計
+# Tab 5: 溫度計 (雙圖表終極版)
 # ==========================================
 with tab5:
-    st.header("🌡️ 台股大盤溫度計")
-    if st.button("測量現在溫度"):
-        with st.spinner("測量中..."):
+    st.header("🌡️ 台股大盤溫度計 (雙鏡頭)")
+    st.markdown("上圖：**大盤走勢與年線** (看趨勢) | 下圖：**乖離率溫度計** (看買賣點)")
+    
+    if st.button("啟動雙鏡頭分析"):
+        with st.spinner("資料讀取與繪圖中..."):
             try:
                 # 1. 下載數據
                 df = yf.download("^TWII", period="5y")
                 
-                # 2. 資料清洗 (關鍵修復步驟)
-                # 如果是 MultiIndex (多層索引)，嘗試只取 Close
+                # 2. 資料清洗 (確保抓到單一數列)
                 if isinstance(df.columns, pd.MultiIndex):
-                    # 嘗試取 'Close'，如果失敗則取第一欄
-                    try:
-                        data = df['Close']
-                    except:
-                        data = df.iloc[:, 0] 
+                    try: data = df['Close']
+                    except: data = df.iloc[:, 0]
                 else:
-                    # 如果不是多層索引，直接取 Close 或第一欄
                     data = df['Close'] if 'Close' in df.columns else df.iloc[:, 0]
 
-                # 雙重保險：如果 data 還是 DataFrame (表格)，強制轉為 Series (數列)
                 if isinstance(data, pd.DataFrame):
                     data = data.iloc[:, 0]
                 
-                # 3. 計算乖離率
+                # 3. 計算數據
                 ma200 = data.rolling(200).mean()
                 bias = ((data - ma200) / ma200) * 100
                 
-                # 取得最新數值 (轉為純數字 float)
-                current_index = float(data.iloc[-1])
+                # 取得最新數值
+                current_price = float(data.iloc[-1])
                 curr_bias = float(bias.iloc[-1])
+                curr_ma = float(ma200.iloc[-1])
                 
-                # 4. 顯示儀表板數字
-                col1, col2 = st.columns(2)
-                with col1: st.metric("目前大盤指數", f"{int(current_index):,}")
-                with col2: st.metric("乖離率 (Bias)", f"{curr_bias:.2f}%")
+                # 4. 顯示儀表板數據
+                c1, c2, c3 = st.columns(3)
+                c1.metric("加權指數", f"{int(current_price):,}")
+                c2.metric("200日年線", f"{int(curr_ma):,}")
+                c3.metric("乖離率", f"{curr_bias:.2f}%")
                 
-                if curr_bias > 15: st.warning("🔴 過熱 (Overheated) - 建議分批慢買")
-                elif curr_bias < 0: st.success("🟢 便宜 (Oversold) - 黃金買點")
-                else: st.info("🟡 合理 (Fair) - 定期定額")
+                # 判斷燈號
+                if curr_bias > 15: st.warning("🔴 警告：過熱 (Overheated) - 小心回檔")
+                elif curr_bias < 0: st.success("🟢 機會：便宜 (Oversold) - 黃金買點")
+                else: st.info("🟡 狀態：合理 (Fair) - 順勢操作")
                 
-                # 5. 畫圖 (關鍵修復：轉為 numpy array 確保是一維)
-                fig, ax = plt.subplots(figsize=(10, 4))
+                # 5. 繪製雙層圖表 (重點修改)
+                # sharex=True 代表上下兩張圖共用時間軸，拖動一個另一個也會動
+                fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
                 
-                # 將 Series 的索引(日期)和數值(乖離率)分開提取，並確保是 1D
-                dates = bias.index
-                bias_values = bias.values.flatten() # <--- 這裡強制壓扁成一維陣列
+                # 準備繪圖數據 (壓扁成 1D)
+                dates = data.index
+                price_values = data.values.flatten()
+                ma_values = ma200.values.flatten()
+                bias_values = bias.values.flatten()
                 
-                ax.plot(dates, bias_values, color='gray', label='Bias', linewidth=1)
+                # --- 上圖：股價走勢 ---
+                ax1.plot(dates, price_values, label='TAIEX Index', color='#1f77b4', linewidth=1.5)
+                ax1.plot(dates, ma_values, label='200 MA (Yearly)', color='orange', linestyle='--', linewidth=1.2)
+                ax1.set_title("台股走勢 vs 年線", fontsize=12)
+                ax1.legend(loc='upper left')
+                ax1.grid(True, linestyle=':', alpha=0.6)
                 
-                # fill_between 現在接收的是純一維陣列，不會再報錯
-                ax.fill_between(dates, bias_values, 15, where=(bias_values>15), color='red', alpha=0.5)
-                ax.fill_between(dates, bias_values, 0, where=(bias_values<0), color='green', alpha=0.5)
+                # --- 下圖：乖離率溫度計 ---
+                ax2.plot(dates, bias_values, color='gray', linewidth=1, label='Bias %')
+                ax2.fill_between(dates, bias_values, 15, where=(bias_values>15), color='red', alpha=0.5, label='Overheated')
+                ax2.fill_between(dates, bias_values, 0, where=(bias_values<0), color='green', alpha=0.5, label='Oversold')
+                ax2.axhline(0, color='black', linestyle='-', linewidth=1) # 0軸實線
+                ax2.axhline(15, color='red', linestyle=':', alpha=0.5)    # 過熱線
+                ax2.set_title("乖離率 (溫度計)", fontsize=12)
+                ax2.grid(True, linestyle=':', alpha=0.6)
                 
-                ax.axhline(0, color='black', linestyle='--')
-                ax.set_title("Market Bias History (5 Years)")
+                plt.tight_layout()
                 st.pyplot(fig)
                 
             except Exception as e:
                 st.error(f"發生錯誤：{e}")
-                # 顯示更詳細的錯誤以便除錯 (選用)
-                # st.write(e)
 # ==========================================
 # Tab 6: 智能進場策略 (雙軌制 - 升級版)
 # ==========================================
@@ -329,3 +338,4 @@ with tab6:
                         
         except Exception as e:
             st.error(f"發生錯誤：{e}")
+
